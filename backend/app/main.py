@@ -9,7 +9,7 @@ from app.core.database import engine, Base
 # Import all models so Alembic and Base.metadata see them
 import app.models.user  # noqa: F401
 
-from app.routers import auth, webhooks, health
+from app.routers import auth, webhooks, health, score
 
 logging.basicConfig(
     level=logging.INFO,
@@ -43,8 +43,8 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(webhooks.router)
+app.include_router(score.router)
 
-# Phase 2+ routers registered here as they are built:
-# app.include_router(score.router)
+# Phase 3+ routers:
 # app.include_router(credit.router)
 # app.include_router(match.router)

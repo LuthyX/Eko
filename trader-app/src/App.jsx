@@ -1,72 +1,55 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
-import { useState } from 'react'
+import { AuthProvider, TraderProvider } from './context/AppContext'
 
-// Layout
-function AppLayout({ children }) {
-  return (
-    <div className="min-h-screen bg-gray-50">
-      {children}
-    </div>
-  )
-}
-
-// Pages (placeholders)
-function Dashboard() {
-  return (
-    <div className="p-8">
-      <h1 className="text-3xl font-bold text-gray-900">Trader Dashboard</h1>
-      <p className="text-gray-600 mt-2">Welcome to Eko Trader</p>
-    </div>
-  )
-}
-
-function OnboardingPage() {
-  return (
-    <div className="p-8">
-      <h1 className="text-2xl font-bold">Trader Onboarding</h1>
-    </div>
-  )
-}
-
-function EkoScorePage() {
-  return (
-    <div className="p-8">
-      <h1 className="text-2xl font-bold">EkoScore Dashboard</h1>
-    </div>
-  )
-}
-
-function EkoCreditPage() {
-  return (
-    <div className="p-8">
-      <h1 className="text-2xl font-bold">EkoCredit</h1>
-    </div>
-  )
-}
-
-function OpportunitiesPage() {
-  return (
-    <div className="p-8">
-      <h1 className="text-2xl font-bold">Post Opportunities</h1>
-    </div>
-  )
-}
+// Pages
+import DashboardPage from './pages/DashboardPage'
+import EkoScorePage from './pages/EkoScorePage'
+import WalletPage from './pages/WalletPage'
+import EkoCreditPage from './pages/EkoCreditPage'
+import RepaymentTrackerPage from './pages/RepaymentTrackerPage'
+import MyPostingsPage from './pages/MyPostingsPage'
+import ApplicantsPage from './pages/ApplicantsPage'
+import JobProgressPage from './pages/JobProgressPage'
+import JobCompletePage from './pages/JobCompletePage'
+import JobsNearYouPage from './pages/JobsNearYouPage'
+import MyApplicationsPage from './pages/MyApplicationsPage'
+import EarningsPage from './pages/EarningsPage'
+import LenderPortalPage from './pages/LenderPortalPage'
+import TraderDetailPage from './pages/TraderDetailPage'
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
-
   return (
-    <Router>
-      <AppLayout>
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/onboarding" element={<OnboardingPage />} />
-          <Route path="/score" element={<EkoScorePage />} />
-          <Route path="/credit" element={<EkoCreditPage />} />
-          <Route path="/opportunities" element={<OpportunitiesPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </AppLayout>
-    </Router>
+    <AuthProvider>
+      <TraderProvider>
+        <Router>
+          <div className="bg-gray-50 min-h-screen">
+            <Routes>
+              {/* Trader routes */}
+              <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/score" element={<EkoScorePage />} />
+              <Route path="/wallet" element={<WalletPage />} />
+              <Route path="/credit" element={<EkoCreditPage />} />
+              <Route path="/credit/repayment" element={<RepaymentTrackerPage />} />
+              <Route path="/postings" element={<MyPostingsPage />} />
+              <Route path="/job/:id/applicants" element={<ApplicantsPage />} />
+              <Route path="/job/:id/progress" element={<JobProgressPage />} />
+              <Route path="/job/:id/complete" element={<JobCompletePage />} />
+              
+              {/* Job seeker routes */}
+              <Route path="/jobs" element={<JobsNearYouPage />} />
+              <Route path="/applications" element={<MyApplicationsPage />} />
+              <Route path="/earnings" element={<EarningsPage />} />
+              
+              {/* Lender routes */}
+              <Route path="/lender" element={<LenderPortalPage />} />
+              <Route path="/lender/trader/:id" element={<TraderDetailPage />} />
+              
+              {/* Default redirect */}
+              <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            </Routes>
+          </div>
+        </Router>
+      </TraderProvider>
+    </AuthProvider>
   )
 }

@@ -10,7 +10,7 @@ from app.core.database import engine, Base
 import app.models.user    # noqa: F401
 import app.models.wallet  # noqa: F401
 
-from app.routers import auth, webhooks, health, score, credit
+from app.routers import auth, webhooks, health, score, credit, match
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,11 +23,10 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title="Eko API",
     description="Intelligent economic platform for informal traders and job seekers",
-    version="0.1.0",
+    version="0.2.0",
 )
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
-# In production, restrict origins to your actual frontend domains.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"] if settings.ENVIRONMENT == "development" else [
@@ -46,6 +45,4 @@ app.include_router(auth.router)
 app.include_router(webhooks.router)
 app.include_router(score.router)
 app.include_router(credit.router)
-
-# Phase 4:
-# app.include_router(match.router)
+app.include_router(match.router)   # Phase 4 — job matching

@@ -1,8 +1,15 @@
 """
-Credit service — Phase 3.
+Credit service — Phase 3 (refactored for best-practice money flow).
 
-Handles EkoCredit disbursement, repayment sweeps, EkoSave, and withdrawals.
-All money movement calls Squad API and records to the internal wallet ledger.
+Best-practice change from original:
+  BEFORE: disburse_credit() credited the trader's wallet immediately after
+          calling Squad. If Squad succeeded but the webhook was delayed/lost,
+          the trader had a phantom balance.
+
+  AFTER:  disburse_credit() creates the loan (pending) and calls Squad.
+          The trader's wallet is only credited in webhooks.py when Squad
+          fires transfer.success. Clean audit trail. No phantom balances.
+          If Squad fails, the loan stays pending — nothing to reverse.
 """
 from __future__ import annotations
 
@@ -57,7 +64,6 @@ def estimate_repayment_days(
     """
     Estimate how many days until the loan is repaid based on sweep rate
     and the trader's average monthly incoming volume.
-    Used to warn traders if they're unlikely to repay within the window.
     """
     if avg_monthly_volume_naira <= 0:
         return REPAYMENT_WINDOW_DAYS
@@ -70,7 +76,7 @@ def estimate_repayment_days(
     return min(int(months * 30), 365)
 
 
-# ── EkoCredit ─────────────────────────────────────────────────────────────────
+# ── EkoCredit eligibility ─────────────────────────────────────────────────────
 
 def check_credit_eligibility(trader: TraderProfile, db: Session) -> dict:
     """
@@ -94,10 +100,9 @@ def check_credit_eligibility(trader: TraderProfile, db: Session) -> dict:
             "threshold": EKOCREDIT_SCORE_THRESHOLD,
         }
 
-    # Check for existing active loan
     active_loan = (
         db.query(Loan)
-        .filter(Loan.trader_id == trader.id, Loan.status == LoanStatus.active)
+        .filter(Loan.trader_id == trader.id, Loan.status.in_([LoanStatus.active, LoanStatus.pending]))
         .first()
     )
     if active_loan:
@@ -108,14 +113,9 @@ def check_credit_eligibility(trader: TraderProfile, db: Session) -> dict:
             "outstanding_naira": active_loan.outstanding / 100,
         }
 
-    # Score-based advance cap
     max_advance_naira = min(int((score.score / 100) * 500_000), 500_000)
-
-    # Score-based sweep rate
     sweep_rate = calculate_sweep_rate(score.score)
 
-    # Estimate repayment time based on trader's transaction volume signal
-    # transaction_volume_score is 0–100, maps back to ~₦0–₦2M per 90 days
     vol_score = score.transaction_volume_score or 0
     avg_monthly_volume = int((vol_score / 100) * 2_000_000 / 3)
     est_days = estimate_repayment_days(max_advance_naira, sweep_rate, avg_monthly_volume)
@@ -138,6 +138,8 @@ def check_credit_eligibility(trader: TraderProfile, db: Session) -> dict:
     }
 
 
+# ── EkoCredit disbursement (refactored) ───────────────────────────────────────
+
 def disburse_credit(
     trader: TraderProfile,
     amount_naira: int,
@@ -145,8 +147,20 @@ def disburse_credit(
     requested_sweep_rate_pct: float | None = None,
 ) -> Loan:
     """
-    Disburse an EkoCredit advance to a trader.
-    sweep_rate is score-based minimum. Trader may request higher rate to pay faster.
+    Initiate an EkoCredit advance.
+
+    Refactored best-practice flow:
+      1. Validate eligibility
+      2. Create Loan record (status: pending)
+      3. Call Squad transfer API
+      4. Return the pending loan — UI shows "processing"
+      5. webhooks.py _confirm_credit_disbursement() fires on transfer.success:
+           - Credits trader's wallet
+           - Sets loan.status = active
+           - Sets loan.disbursed_at
+
+    The trader's wallet is NOT credited here. It is credited only when
+    Squad confirms the transfer. This prevents phantom balances.
     """
     eligibility = check_credit_eligibility(trader, db)
     if not eligibility["eligible"]:
@@ -159,7 +173,6 @@ def disburse_credit(
 
     minimum_sweep = eligibility["terms"]["minimum_sweep_rate_pct"]
 
-    # Trader can request a higher rate (pay faster) but never below the minimum
     if requested_sweep_rate_pct is not None:
         if requested_sweep_rate_pct < minimum_sweep:
             raise CreditNotEligibleError(
@@ -175,7 +188,7 @@ def disburse_credit(
     idempotency_key = generate_idempotency_key("CREDIT")
     amount_kobo = amount_naira * 100
 
-    # Create loan record in pending state
+    # ── Step 1: Create loan in pending state ──────────────────────────────────
     loan = Loan(
         trader_id=trader.id,
         amount=amount_kobo,
@@ -189,52 +202,49 @@ def disburse_credit(
     db.add(loan)
     db.flush()
 
-    # Get trader's wallet
+    # ── Step 2: Call Squad transfer API ───────────────────────────────────────
     wallet = get_wallet_or_error(trader.user_id, db)
 
-    # Call Squad transfer API
-    squad_ref = None
-    try:
-        if wallet.virtual_account_number:
-            # Real Squad transfer to trader's virtual account
+    if wallet.virtual_account_number:
+        try:
             transfer_data = initiate_transfer(
                 amount=amount_naira,
                 bank_code=_get_bank_code(wallet.virtual_bank_name),
                 account_number=wallet.virtual_account_number,
                 account_name=wallet.virtual_account_name or trader.user.full_name,
-                narration=f"EkoCredit advance - Loan #{loan.id}",
+                narration=f"EkoCredit advance — Loan #{loan.id}",
                 idempotency_key=idempotency_key,
             )
             squad_ref = transfer_data.get("transaction_ref")
             loan.squad_transaction_ref = squad_ref
-        else:
-            logger.warning(f"No virtual account for trader {trader.id} — crediting wallet only")
-    except SquadAPIError as e:
-        logger.error(f"Squad transfer failed for loan {loan.id}: {e}")
-        # In demo: still credit the wallet so the demo works
-        # In production: mark loan as failed and raise
+            logger.info(f"EkoCredit Squad transfer initiated: loan={loan.id} ref={squad_ref}")
+        except SquadAPIError as e:
+            # Loan stays pending — webhook will never fire — flag for manual review
+            logger.error(
+                f"Squad transfer failed for loan {loan.id}: {e} "
+                f"— loan stays pending, manual review required"
+            )
+            # Don't raise — return the pending loan so the API doesn't 500
+            # In production: enqueue a retry job here
+    else:
+        logger.warning(
+            f"Trader {trader.id} has no virtual account — "
+            f"loan {loan.id} pending, manual disbursement required"
+        )
 
-    # Credit internal wallet
-    credit(
-        wallet=wallet,
-        amount_kobo=amount_kobo,
-        tx_type=WalletTxType.credit_loan_disbursement,
-        idempotency_key=f"{idempotency_key}_WALLET",
-        db=db,
-        squad_reference=squad_ref,
-        description=f"EkoCredit advance ₦{amount_naira:,}",
-        loan_id=loan.id,
-    )
-
-    # Activate loan
-    loan.status = LoanStatus.active
-    loan.disbursed_at = datetime.now(timezone.utc)
+    # ── Step 3: Commit pending loan ───────────────────────────────────────────
+    # Wallet credit happens in webhooks.py _confirm_credit_disbursement()
     db.commit()
     db.refresh(loan)
 
-    logger.info(f"EkoCredit disbursed: trader={trader.id} amount=₦{amount_naira:,} loan={loan.id}")
+    logger.info(
+        f"EkoCredit initiated: trader={trader.id} amount=₦{amount_naira:,} "
+        f"loan={loan.id} status=pending (awaiting Squad webhook)"
+    )
     return loan
 
+
+# ── Manual repayment ──────────────────────────────────────────────────────────
 
 def manual_repayment(
     trader: TraderProfile,
@@ -252,17 +262,13 @@ def manual_repayment(
     if not active_loan:
         raise CreditNotEligibleError("No active loan to repay")
 
-    amount_kobo = amount_naira * 100
-
-    # Cap repayment at outstanding balance — no overpayment
-    amount_kobo = min(amount_kobo, active_loan.outstanding)
+    amount_kobo = min(amount_naira * 100, active_loan.outstanding)
     if amount_kobo <= 0:
         raise CreditNotEligibleError("Loan is already fully repaid")
 
     wallet = get_wallet_or_error(trader.user_id, db)
     idempotency_key = generate_idempotency_key("MANUALREPAY")
 
-    # Debit wallet
     try:
         debit(
             wallet=wallet,
@@ -279,7 +285,6 @@ def manual_repayment(
             f"for repayment of ₦{amount_kobo/100:,.2f}"
         )
 
-    # Record repayment
     repayment = Repayment(
         loan_id=active_loan.id,
         amount=amount_kobo,
@@ -287,12 +292,11 @@ def manual_repayment(
     )
     db.add(repayment)
 
-    # Reduce outstanding
     active_loan.outstanding -= amount_kobo
     if active_loan.outstanding <= 0:
         active_loan.outstanding = 0
         active_loan.status = LoanStatus.repaid
-        logger.info(f"Loan {active_loan.id} fully repaid via manual payment!")
+        logger.info(f"Loan {active_loan.id} fully repaid via manual payment")
 
     db.commit()
     db.refresh(repayment)
@@ -322,7 +326,7 @@ def get_loan_history(trader_id: int, db: Session) -> list[Loan]:
     )
 
 
-# ── Repayment sweep (called by webhook handler) ───────────────────────────────
+# ── Repayment sweep (called by webhook handler on charge.success) ─────────────
 
 def process_repayment_sweep(
     trader: TraderProfile,
@@ -332,8 +336,9 @@ def process_repayment_sweep(
 ) -> Repayment | None:
     """
     Called when a charge.success webhook fires for a trader.
-    Sweeps REPAYMENT_SWEEP_PCT of the incoming payment toward the active loan.
+    Sweeps sweep_rate_pct of the incoming payment toward the active loan.
     Also triggers EkoSave sweep.
+    Note: only sweeps against ACTIVE loans — pending loans don't get swept.
     """
     active_loan = get_active_loan(trader.id, db)
 
@@ -341,12 +346,11 @@ def process_repayment_sweep(
     if active_loan:
         sweep_rate = active_loan.sweep_rate_pct or 10.0
         sweep_amount = int(incoming_amount_kobo * (sweep_rate / 100))
-        sweep_amount = min(sweep_amount, active_loan.outstanding)  # don't overpay
+        sweep_amount = min(sweep_amount, active_loan.outstanding)
 
         if sweep_amount > 0:
             idempotency_key = f"REPAY_{squad_webhook_ref}"
 
-            # Check not already processed
             existing = (
                 db.query(Repayment)
                 .filter(Repayment.squad_webhook_ref == squad_webhook_ref)
@@ -366,7 +370,7 @@ def process_repayment_sweep(
                     idempotency_key=idempotency_key,
                     db=db,
                     squad_reference=squad_webhook_ref,
-                    description=f"EkoCredit auto-repayment (10% sweep)",
+                    description=f"EkoCredit auto-repayment ({sweep_rate}% sweep)",
                     loan_id=active_loan.id,
                 )
             except InsufficientBalanceError:
@@ -385,13 +389,11 @@ def process_repayment_sweep(
             if active_loan.outstanding <= 0:
                 active_loan.outstanding = 0
                 active_loan.status = LoanStatus.repaid
-                logger.info(f"Loan {active_loan.id} fully repaid!")
+                logger.info(f"Loan {active_loan.id} fully repaid via sweep")
 
             db.flush()
 
-    # EkoSave sweep (runs regardless of loan status)
     _process_ekosave_sweep(trader, incoming_amount_kobo, squad_webhook_ref, db)
-
     db.commit()
     return repayment
 
@@ -455,7 +457,7 @@ def _process_ekosave_sweep(
         save_account.balance += sweep_amount
         db.flush()
         logger.info(f"EkoSave sweep: trader={trader.id} amount=₦{sweep_amount/100:.2f}")
-    except (InsufficientBalanceError, Exception) as e:
+    except Exception as e:
         logger.warning(f"EkoSave sweep failed: {e}")
 
 
@@ -475,7 +477,8 @@ def initiate_withdrawal(
 ) -> dict:
     """
     User withdraws funds from their Eko wallet to their personal bank account.
-    Debits internal wallet, calls Squad transfer API.
+    Debits internal wallet immediately, calls Squad transfer API.
+    Withdrawal is a user-initiated action — debit is confirmed at their request.
     """
     wallet = get_wallet_or_error(user_id, db)
     amount_kobo = amount_naira * 100
@@ -487,7 +490,6 @@ def initiate_withdrawal(
 
     idempotency_key = generate_idempotency_key("WITHDRAW")
 
-    # Squad transfer
     squad_ref = None
     try:
         transfer_data = initiate_transfer(
@@ -502,7 +504,6 @@ def initiate_withdrawal(
     except SquadAPIError as e:
         raise WithdrawalError(f"Transfer failed: {e}")
 
-    # Debit wallet
     debit(
         wallet=wallet,
         amount_kobo=amount_kobo,
@@ -520,7 +521,6 @@ def initiate_withdrawal(
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _get_bank_code(bank_name: str | None) -> str:
-    """Map Squad bank name to CBN bank code. Fallback to GTBank for sandbox."""
     BANK_CODES = {
         "Wema Bank": "035",
         "GTBank": "058",
@@ -530,7 +530,7 @@ def _get_bank_code(bank_name: str | None) -> str:
         "UBA": "033",
     }
     if not bank_name:
-        return "035"  # Wema Bank — Squad sandbox default
+        return "035"
     for name, code in BANK_CODES.items():
         if name.lower() in bank_name.lower():
             return code

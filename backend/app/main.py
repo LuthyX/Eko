@@ -7,9 +7,10 @@ from app.core.config import settings
 from app.core.database import engine, Base
 
 # Import all models so Alembic and Base.metadata see them
-import app.models.user  # noqa: F401
+import app.models.user    # noqa: F401
+import app.models.wallet  # noqa: F401
 
-from app.routers import auth, webhooks, health, score
+from app.routers import auth, webhooks, health, score, credit
 
 logging.basicConfig(
     level=logging.INFO,
@@ -44,7 +45,7 @@ app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(webhooks.router)
 app.include_router(score.router)
+app.include_router(credit.router)
 
-# Phase 3+ routers:
-# app.include_router(credit.router)
+# Phase 4:
 # app.include_router(match.router)

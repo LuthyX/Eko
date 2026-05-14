@@ -117,6 +117,11 @@ def onboard_trader(
     db.add(profile)
     db.commit()
     db.refresh(profile)
+
+    # Provision wallet + Squad virtual account
+    from app.services.wallet import provision_wallet
+    provision_wallet(current_user, db)
+
     return TraderProfileResponse.from_orm_extended(profile)
 
 
@@ -150,6 +155,11 @@ def onboard_job_seeker(
     db.add(profile)
     db.commit()
     db.refresh(profile)
+
+    # Provision wallet + Squad virtual account
+    from app.services.wallet import provision_wallet
+    provision_wallet(current_user, db)
+
     return profile
 
 

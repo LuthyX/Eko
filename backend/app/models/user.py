@@ -182,6 +182,11 @@ class Loan(Base):
     squad_transaction_ref: Mapped[str | None] = mapped_column(String(100), unique=True)
     idempotency_key: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
 
+    # Repayment terms (set at disbursement, never change)
+    sweep_rate_pct: Mapped[float] = mapped_column(Float, default=10.0)   # % swept per incoming payment
+    repayment_window_days: Mapped[int] = mapped_column(Integer, default=90)
+    requested_sweep_rate_pct: Mapped[float | None] = mapped_column(Float)  # trader-requested higher rate
+
     disbursed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

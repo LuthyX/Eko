@@ -27,7 +27,8 @@ api.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem('auth_token')
-      window.location.href = '/onboarding'
+      localStorage.removeItem('user')
+      window.location.href = '/auth/login'
     }
     return Promise.reject(error)
   }

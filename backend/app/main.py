@@ -10,7 +10,7 @@ from app.core.database import engine, Base
 import app.models.user    # noqa: F401
 import app.models.wallet  # noqa: F401
 
-from app.routers import auth, webhooks, health, credit, match
+from app.routers import auth, webhooks, health, credit, match, lender
 # from app.routers import score  # Phase 2 — EkoScore ML (requires numpy, sklearn, shap)
 
 logging.basicConfig(
@@ -46,4 +46,5 @@ app.include_router(auth.router)
 app.include_router(webhooks.router)
 # app.include_router(score.router)  # Phase 2 — EkoScore ML
 app.include_router(credit.router)
-app.include_router(match.router)
+app.include_router(match.router)   
+app.include_router(lender.router)

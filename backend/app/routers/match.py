@@ -26,11 +26,12 @@ from app.models.user import (
     Match, MatchStatus,
     TraderProfile, JobSeekerProfile,
 )
-from app.models.wallet import WalletTxType
+from app.models.wallet import WalletTxType, Wallet
 from app.schemas.match import (
     OpportunityCreateRequest, OpportunityResponse,
     OpportunityFeedItem, ApplicantRankedResponse,
     MatchResponse, CompleteJobResponse,
+    RateRequest, RateResponse, SeekerProfileResponse,   # ← add these three
 )
 from app.services.matching import score_applicant
 from app.services.squad import initiate_transfer, generate_idempotency_key, SquadAPIError
@@ -38,6 +39,7 @@ from app.services.wallet import get_wallet_or_error, debit, InsufficientBalanceE
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/match", tags=["Matching"])
+PLATFORM_FEE_PCT = 5.0   # Eko's job matching fee — charged to trader
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -325,6 +327,13 @@ def accept_applicant(
     # Move opportunity to in_progress
     opp.status = JobStatus.in_progress
 
+    # Learning loop — increment seeker's jobs_accepted counter
+    try:
+        from app.services.feedback import update_seeker_on_accept
+        update_seeker_on_accept(match.job_seeker, db)
+    except Exception as e:
+        logger.warning(f"Could not update seeker accept count: {e}")
+
     db.commit()
     db.refresh(match)
 
@@ -345,68 +354,76 @@ def complete_job(
     db: Session = Depends(get_db),
 ):
     """
-    Trader marks the job as complete.
-
-    Best-practice payout flow:
-      1. Debit trader's wallet immediately (money leaves trader — confirmed)
-      2. Initiate Squad transfer to job seeker's virtual account
-      3. Return "processing" to trader UI
-      4. Squad fires transfer.success webhook → credit job seeker's wallet (see webhooks.py)
-      5. Match.paid_at and squad_payout_ref saved by webhook handler
-
-    The job seeker's wallet is only credited once Squad confirms the transfer.
-    No phantom balances. Audit trail is clean.
+    Trader marks job complete → Squad pays job seeker.
+ 
+    Revenue:
+      Trader is charged: wage + 5% platform fee
+      Seeker receives:   full wage (no deduction)
+      Eko keeps:         the 5% platform fee
     """
     match = db.get(Match, match_id)
     if not match:
         raise HTTPException(status_code=404, detail="Application not found")
-
+ 
     opp = match.opportunity
     trader = _get_trader_or_404(current_user)
-
+ 
     if opp.trader_id != trader.id:
         raise HTTPException(status_code=403, detail="You can only complete your own jobs")
-
+ 
     if match.status != MatchStatus.accepted:
         raise HTTPException(
             status_code=400,
-            detail=f"Job must be in accepted status to complete. Current: {match.status}",
+            detail=f"Job must be accepted before completing. Current: {match.status}",
         )
-
+ 
     if match.payout_idempotency_key:
         raise HTTPException(status_code=400, detail="Payout already initiated for this job")
-
-    total_pay_naira = opp.daily_pay * opp.duration_days
-    total_pay_kobo = total_pay_naira * 100
-
-    # ── Step 1: Debit trader wallet ───────────────────────────────────────────
+ 
+    # ── Revenue calculation ───────────────────────────────────────────────────
+    wage_naira = opp.daily_pay * opp.duration_days
+    wage_kobo = wage_naira * 100
+    fee_kobo = int(wage_kobo * (PLATFORM_FEE_PCT / 100))
+    total_charge_kobo = wage_kobo + fee_kobo
+    # e.g. ₦12,000 wage + ₦600 fee = ₦12,600 charged to trader
+ 
+    # ── Step 1: Debit trader — wage + platform fee ────────────────────────────
     trader_wallet = get_wallet_or_error(trader.user_id, db)
     payout_key = generate_idempotency_key("WAGE")
-
+ 
     try:
         debit(
             wallet=trader_wallet,
-            amount_kobo=total_pay_kobo,
+            amount_kobo=total_charge_kobo,
             tx_type=WalletTxType.debit_wage_payout,
             idempotency_key=f"{payout_key}_DEBIT",
             db=db,
-            description=f"Wage payout — {opp.title} ({opp.duration_days}d × ₦{opp.daily_pay:,})",
+            description=(
+                f"Wage ₦{wage_naira:,} + platform fee ₦{fee_kobo/100:,.0f} "
+                f"— {opp.title} ({opp.duration_days}d × ₦{opp.daily_pay:,})"
+            ),
             match_id=match.id,
         )
     except InsufficientBalanceError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
-    # ── Step 2: Initiate Squad transfer to job seeker ─────────────────────────
+ 
+    # ── Step 2: Squad transfer to seeker — full wage, no deduction ───────────
     seeker = match.job_seeker
-    seeker_wallet = get_wallet_or_error(seeker.user_id, db)
-
+ 
+    # Guard: provision seeker wallet if missing (fixes the bug you hit)
+    seeker_wallet = db.query(Wallet).filter(
+        Wallet.user_id == seeker.user_id
+    ).first()
+    if not seeker_wallet:
+        from app.services.wallet import provision_wallet
+        seeker_wallet = provision_wallet(seeker.user, db)
+        logger.warning(f"Provisioned missing wallet for seeker {seeker.id} at completion time")
+ 
     squad_ref = None
-    squad_error = None
-
     if seeker_wallet.virtual_account_number:
         try:
             transfer_data = initiate_transfer(
-                amount=total_pay_naira,
+                amount=wage_naira,             # seeker gets full wage
                 bank_code=_get_bank_code(seeker_wallet.virtual_bank_name),
                 account_number=seeker_wallet.virtual_account_number,
                 account_name=seeker_wallet.virtual_account_name or seeker.user.full_name,
@@ -415,49 +432,42 @@ def complete_job(
             )
             squad_ref = transfer_data.get("transaction_ref")
         except SquadAPIError as e:
-            # Log but don't fail — webhook will confirm when transfer goes through
-            # In production, queue for retry
-            squad_error = str(e)
             logger.error(f"Squad transfer failed for match {match_id}: {e}")
     else:
         logger.warning(
-            f"Job seeker {seeker.id} has no virtual account — "
+            f"Seeker {seeker.id} has no virtual account — "
             f"payout queued for manual processing"
         )
-
-    # ── Step 3: Save payout reference on the match ────────────────────────────
+ 
+    # ── Step 3: Save payout reference + update status ─────────────────────────
+    opp.platform_fee_amount = fee_kobo
     match.payout_idempotency_key = payout_key
-    match.squad_payout_ref = squad_ref  # may be None if Squad failed — webhook will fill it
-
-    # ── Step 4: Update opportunity status ─────────────────────────────────────
+    match.squad_payout_ref = squad_ref
     opp.status = JobStatus.completed
     match.completed_at = datetime.now(timezone.utc)
-
-    # Note: match.status stays as "accepted" until webhook fires and sets paid_at
-    # The webhook handler in webhooks.py sets match.squad_payout_ref and match.paid_at
-    # and we can update status to "completed" there too
-
+ 
     db.commit()
-
-    seeker_user = seeker.user if seeker else None
-
+ 
     logger.info(
         f"Job complete: trader={trader.id} match={match_id} "
-        f"seeker={seeker.id} pay=₦{total_pay_naira:,} "
-        f"squad_ref={squad_ref} squad_error={squad_error}"
+        f"wage=₦{wage_naira:,} fee=₦{fee_kobo/100:,.0f} "
+        f"total_charged=₦{total_charge_kobo/100:,.0f} "
+        f"seeker_receives=₦{wage_naira:,} ref={squad_ref}"
     )
-
+ 
     return CompleteJobResponse(
         match_id=match.id,
         opportunity_title=opp.title,
-        job_seeker_name=seeker_user.full_name if seeker_user else None,
-        total_pay_naira=total_pay_naira,
+        job_seeker_name=seeker.user.full_name if seeker.user else None,
+        total_pay_naira=wage_naira,
+        platform_fee_naira=int(fee_kobo / 100),
+        total_charged_naira=int(total_charge_kobo / 100),
         payout_reference=squad_ref,
         payout_status="processing",
         message=(
-            f"₦{total_pay_naira:,} is being transferred to "
-            f"{seeker_user.full_name if seeker_user else 'the job seeker'}'s account. "
-            f"They'll receive it once Squad confirms the transfer."
+            f"₦{wage_naira:,} is being sent to "
+            f"{seeker.user.full_name if seeker.user else 'the job seeker'}. "
+            f"Platform fee: ₦{fee_kobo/100:,.0f}."
         ),
     )
 
@@ -479,6 +489,79 @@ def my_applications(
     )
     return [MatchResponse.from_orm_extended(m) for m in matches]
 
+# ── Rate a completed job ──────────────────────────────────────
+ 
+@router.post("/applications/{match_id}/rate", response_model=RateResponse)
+def rate_match(
+    match_id: int,
+    payload: RateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Rate a completed job.
+    Trader rates the job seeker (1-5 stars).
+    Job seeker rates the trader (1-5 stars).
+    Can only rate once per side per match. Match must be completed.
+    """
+    from app.services.feedback import process_rating
+ 
+    match = db.get(Match, match_id)
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+ 
+    if match.status != MatchStatus.completed:
+        raise HTTPException(status_code=400, detail="Can only rate completed jobs")
+ 
+    if current_user.role == UserRole.trader:
+        trader = _get_trader_or_404(current_user)
+        if match.opportunity.trader_id != trader.id:
+            raise HTTPException(status_code=403, detail="Not your job")
+        rated_by = "trader"
+    elif current_user.role == UserRole.job_seeker:
+        seeker = _get_seeker_or_404(current_user)
+        if match.job_seeker_id != seeker.id:
+            raise HTTPException(status_code=403, detail="Not your application")
+        rated_by = "job_seeker"
+    else:
+        raise HTTPException(status_code=403, detail="Only traders and job seekers can rate")
+ 
+    try:
+        result = process_rating(match, payload.rating, payload.comment, rated_by, db)
+        return RateResponse(**result)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+
+# ── Seeker reliability profile ────────────────────────────────
+ 
+@router.get("/seekers/{job_seeker_id}/profile", response_model=SeekerProfileResponse)
+def get_seeker_profile(
+    job_seeker_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get a job seeker's reliability profile.
+    Traders view this before accepting an applicant.
+    Shows jobs completed, avg rating, completion rate.
+    This is the learning loop output — gets richer with every completed job.
+    """
+    seeker = db.get(JobSeekerProfile, job_seeker_id)
+    if not seeker:
+        raise HTTPException(status_code=404, detail="Job seeker not found")
+    return SeekerProfileResponse.from_orm_extended(seeker)
+
+@router.get("/applications/{match_id}", response_model=MatchResponse)
+def get_application(
+    match_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    match = db.get(Match, match_id)
+    if not match:
+        raise HTTPException(status_code=404, detail="Application not found")
+    return MatchResponse.from_orm_extended(match)
 
 # ── Helper ────────────────────────────────────────────────────────────────────
 

@@ -135,6 +135,10 @@ class JobSeekerProfile(Base):
     squad_account_id: Mapped[str | None] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    jobs_completed: Mapped[int] = mapped_column(Integer, default=0)
+    jobs_accepted: Mapped[int] = mapped_column(Integer, default=0)
+    avg_rating: Mapped[float] = mapped_column(Float, default=0.0)
+
     user: Mapped[User] = relationship("User", back_populates="job_seeker_profile")
     matches: Mapped[list[Match]] = relationship("Match", back_populates="job_seeker")
 
@@ -193,6 +197,9 @@ class Loan(Base):
     trader: Mapped[TraderProfile] = relationship("TraderProfile", back_populates="loans")
     repayments: Mapped[list[Repayment]] = relationship("Repayment", back_populates="loan")
 
+    fee_rate_pct: Mapped[float] = mapped_column(Float, default=5.0)
+    fee_amount: Mapped[int] = mapped_column(Integer, default=0)
+
 
 # ── Repayment ─────────────────────────────────────────────────────────────────
 
@@ -244,6 +251,9 @@ class Opportunity(Base):
     trader: Mapped[TraderProfile] = relationship("TraderProfile", back_populates="posted_opportunities")
     matches: Mapped[list[Match]] = relationship("Match", back_populates="opportunity")
 
+    platform_fee_pct: Mapped[float] = mapped_column(Float, default=5.0)
+    platform_fee_amount: Mapped[int] = mapped_column(Integer, default=0)
+
 
 # ── Match ─────────────────────────────────────────────────────────────────────
 
@@ -266,6 +276,11 @@ class Match(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    trader_rating: Mapped[int | None] = mapped_column(Integer)
+    seeker_rating: Mapped[int | None] = mapped_column(Integer)
+    trader_comment: Mapped[str | None] = mapped_column(Text)
+    seeker_comment: Mapped[str | None] = mapped_column(Text)
 
     opportunity: Mapped[Opportunity] = relationship("Opportunity", back_populates="matches")
     job_seeker: Mapped[JobSeekerProfile] = relationship("JobSeekerProfile", back_populates="matches")

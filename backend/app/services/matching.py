@@ -55,18 +55,35 @@ def score_applicant(
 
 # ── Claude scoring ────────────────────────────────────────────────────────────
 
-def _build_prompt(opportunity: Opportunity, job_seeker: JobSeekerProfile) -> str:
+def _build_prompt(opportunity, job_seeker) -> str:
     skills_required = ", ".join(opportunity.skills_required or []) or "Not specified"
     language_required = opportunity.language_required or "Not specified"
     seeker_skills = ", ".join(job_seeker.skills or []) or "Not specified"
     seeker_languages = ", ".join(job_seeker.languages or []) or "Not specified"
     seeker_rate = f"₦{job_seeker.daily_rate_expectation:,}/day" if job_seeker.daily_rate_expectation else "Not specified"
-
+ 
+    # Learning loop — inject work history into prompt
+    jobs_completed = getattr(job_seeker, "jobs_completed", 0) or 0
+    avg_rating = getattr(job_seeker, "avg_rating", 0.0) or 0.0
+    jobs_accepted = getattr(job_seeker, "jobs_accepted", 0) or 0
+ 
+    if jobs_completed == 0:
+        work_history = "New to Eko — no completed jobs yet."
+    elif avg_rating > 0:
+        completion_rate = int((jobs_completed / jobs_accepted * 100)) if jobs_accepted > 0 else 100
+        work_history = (
+            f"{jobs_completed} job(s) completed on Eko · "
+            f"avg rating {avg_rating:.1f}/5★ · "
+            f"{completion_rate}% completion rate"
+        )
+    else:
+        work_history = f"{jobs_completed} job(s) completed on Eko · not yet rated"
+ 
     return f"""You are a matching engine for Eko, an informal economy platform in Lagos, Nigeria.
-
+ 
 Your job is to score how well a job seeker fits a trader's opportunity.
 Be practical and specific to the Lagos informal market context.
-
+ 
 OPPORTUNITY:
 - Title: {opportunity.title}
 - Description: {opportunity.description or "Not provided"}
@@ -75,29 +92,31 @@ OPPORTUNITY:
 - Duration: {opportunity.duration_days} day(s)
 - Skills required: {skills_required}
 - Language required: {language_required}
-
+ 
 JOB SEEKER PROFILE:
 - Location: {job_seeker.location or "Not specified"}
 - Skills: {seeker_skills}
 - Languages: {seeker_languages}
 - Daily rate expectation: {seeker_rate}
-
+- Work history: {work_history}
+ 
 Score this applicant from 0 to 100 based on:
 1. Skill match (how well their skills cover what's required)
 2. Language match (critical for customer-facing roles at Balogun/Mile 12)
 3. Location proximity (closer = more reliable attendance in Lagos traffic)
 4. Pay alignment (does the offered rate meet their expectation)
-
+5. Work history reliability (completed jobs + rating = trust signal)
+ 
 Respond ONLY with valid JSON in this exact format, no preamble, no markdown:
 {{
   "score": <number 0-100>,
-  "reasoning": "<one concise sentence explaining the score, max 25 words, written as if shown directly to the trader>"
+  "reasoning": "<one concise sentence, max 25 words, written as if shown directly to the trader>"
 }}
-
+ 
 Examples of good reasoning:
-- "Yoruba speaker with direct market sales experience, 2.1km away — strong fit across all criteria."
-- "Good skills match but no Yoruba and 6km away — reliable attendance may be an issue."
-- "Rate expectation ₦1,000 above offer — may not commit for the full duration."
+- "Yoruba speaker with 3 completed jobs (4.8★), 2.1km away — highly reliable fit."
+- "Good skills match but no Yoruba and 6km away — attendance may be an issue."
+- "New to platform but strong skills and exact pay alignment — worth a chance."
 """
 
 

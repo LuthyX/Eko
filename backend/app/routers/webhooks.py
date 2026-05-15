@@ -381,6 +381,13 @@ def _confirm_wage_payout(ref: str, db: Session):
     match.squad_payout_ref = ref
     match.paid_at = datetime.now(timezone.utc)
     match.status = MatchStatus.completed
+
+    # Learning loop — update seeker stats after confirmed payout
+    try:
+        from app.services.feedback import post_completion_update
+        post_completion_update(match, db)
+    except Exception as e:
+        logger.warning(f"Feedback update failed for match {match.id}: {e}")
     db.commit()
 
     logger.info(

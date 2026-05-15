@@ -14,6 +14,6 @@ pytest==8.2.0
 pytest-asyncio==0.23.6
 
 # Phase 2 — ML (uncomment when implementing ML features)
-# scikit-learn==1.4.2
-# shap==0.45.1
-# numpy==1.26.4
+# scikit-learn
+# shap
+# numpy

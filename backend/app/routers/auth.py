@@ -37,6 +37,15 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(user)
 
+    # Auto-create profile based on role
+    if payload.role == UserRole.trader:
+        trader = TraderProfile(user_id=user.id)
+        db.add(trader)
+    elif payload.role == UserRole.job_seeker:
+        seeker = JobSeekerProfile(user_id=user.id)
+        db.add(seeker)
+    db.commit()
+
     token = create_access_token({"sub": str(user.id), "role": user.role})
     return TokenResponse(access_token=token, role=user.role, user_id=user.id)
 

@@ -6,6 +6,7 @@ const AuthPage = ({ onAuthSuccess }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  // Role is fixed — this is the job-seeker app. Traders use the trader app.
   const [formData, setFormData] = useState({
     full_name: "",
     email: "",
@@ -18,6 +19,21 @@ const AuthPage = ({ onAuthSuccess }) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
+  // The backend's wallet model only materialises a row when /wallet/me is
+  // hit for the first time. The README says "Always call this after login"
+  // — doing it here means every other screen can safely assume a wallet
+  // exists without each having to defensively provision one.
+  const ensureWalletProvisioned = async () => {
+    try {
+      await apiClient.get("/wallet/me");
+    } catch (err) {
+      // Non-fatal — log and continue. Auth still succeeded; the user can
+      // navigate. If something's genuinely broken with the wallet, real
+      // errors will surface on the screens that actually need it.
+      console.warn("Wallet provisioning check failed:", err);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsLoading(true);
@@ -28,6 +44,7 @@ const AuthPage = ({ onAuthSuccess }) => {
         const payload = { email: formData.email, password: formData.password };
         const response = await apiClient.post("/auth/login", payload);
         localStorage.setItem("token", response.data.access_token);
+        await ensureWalletProvisioned();
         onAuthSuccess();
       } else {
         // Always register as job_seeker — this app doesn't support trader signup
@@ -42,6 +59,7 @@ const AuthPage = ({ onAuthSuccess }) => {
         });
 
         localStorage.setItem("token", loginResponse.data.access_token);
+        await ensureWalletProvisioned();
         onAuthSuccess();
       }
     } catch (err) {

@@ -4,9 +4,6 @@ import apiClient from "../api/client";
 import BottomNav from "./BottomNav";
 import Skeleton from "./Skeleton";
 
-// Same hook as JobsNearYouPage — kept local for portability so each
-// component can be dropped in independently. If you prefer DRY, move
-// this into src/utils/useCountUp.js and import from both.
 function useCountUp(target, duration = 1200) {
   const [value, setValue] = useState(0);
 
@@ -42,44 +39,45 @@ const formatDate = (iso) => {
   });
 };
 
+// Maps the backend's tx_type enum to a friendly label for the seeker UI
+const txTypeLabel = (type) => {
+  switch (type) {
+    case "credit_wage_received":
+      return "Wage received";
+    case "credit_payment_received":
+      return "Payment received";
+    case "debit_withdrawal":
+      return "Withdrawal";
+    default:
+      return type?.replace(/_/g, " ") || "Transaction";
+  }
+};
+
 const EarningsPage = () => {
   const navigate = useNavigate();
-  const [paid, setPaid] = useState([]);
-  const [opps, setOpps] = useState({});
+  const [wallet, setWallet] = useState(null);
+  const [transactions, setTransactions] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const appsRes = await apiClient.get("/match/applications/mine");
-        const paidApps = appsRes.data.filter(
-          (a) => a.status === "completed" || a.paid_at != null,
-        );
-        paidApps.sort((a, b) => {
-          const at = a.paid_at || a.created_at;
-          const bt = b.paid_at || b.created_at;
-          return new Date(bt) - new Date(at);
-        });
-        setPaid(paidApps);
-
-        const uniqueOppIds = [
-          ...new Set(paidApps.map((a) => a.opportunity_id)),
-        ];
-        const oppPromises = uniqueOppIds.map((id) =>
-          apiClient
-            .get(`/match/opportunities/${id}`)
-            .then((r) => [id, r.data])
-            .catch(() => [id, null]),
-        );
-        const oppResults = await Promise.all(oppPromises);
-        const oppMap = Object.fromEntries(
-          oppResults.filter(([_, v]) => v !== null),
-        );
-        setOpps(oppMap);
+        // Wallet + transactions are now first-class endpoints — no more
+        // joining /match/applications/mine with /match/opportunities/{id}.
+        const [walletRes, txsRes] = await Promise.all([
+          apiClient.get("/wallet/me").catch(() => ({ data: null })),
+          apiClient.get("/wallet/me/transactions?limit=50").catch(() => ({
+            data: [],
+          })),
+        ]);
+        setWallet(walletRes.data);
+        setTransactions(txsRes.data);
       } catch (err) {
         console.error("Failed to load earnings:", err);
-        setError("Could not load earnings.");
+        if (err.response?.status !== 401) {
+          setError("Could not load earnings.");
+        }
       } finally {
         setIsLoading(false);
       }
@@ -87,14 +85,19 @@ const EarningsPage = () => {
     load();
   }, []);
 
-  const totalEarned = paid.reduce((sum, app) => {
-    const opp = opps[app.opportunity_id];
-    if (!opp) return sum;
-    return sum + (opp.daily_pay || 0) * (opp.duration_days || 0);
-  }, 0);
+  // Show all credit transactions as "payouts" — for a job seeker this is
+  // essentially their wage history. Backend will also include any other
+  // incoming money (e.g. refunds) here, which is correct.
+  const credits = transactions
+    .filter((tx) => tx.direction === "credit")
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-  // Only start counting up once everything has loaded — otherwise the
-  // number animates twice (once on apps load, again when opps fill in)
+  // Use the wallet's authoritative balance for the hero number. If the
+  // wallet failed to load, fall back to summing credits — not perfectly
+  // accurate (ignores any debits) but better than showing nothing.
+  const totalEarned =
+    wallet?.balance_naira ??
+    credits.reduce((s, tx) => s + (tx.amount_naira || 0), 0);
   const animatedTotal = useCountUp(isLoading ? null : totalEarned, 1200);
 
   return (
@@ -120,9 +123,9 @@ const EarningsPage = () => {
           </p>
 
           {/* Total card with count-up */}
-          <div className="bg-brand text-white rounded-md p-4 mb-4 relative overflow-hidden shadow-sm">
+          <div className="bg-brand text-white rounded-md p-4 mb-3 relative overflow-hidden shadow-sm">
             <div className="text-[10px] font-mono tracking-wider opacity-80 mb-1">
-              TOTAL EARNED
+              EARNED ON EKO
             </div>
             {isLoading ? (
               <Skeleton className="h-8 w-32 bg-white/20" />
@@ -134,12 +137,39 @@ const EarningsPage = () => {
             <div className="text-[11px] opacity-80 mt-1.5">
               {isLoading
                 ? "Loading..."
-                : `${paid.length} ${paid.length === 1 ? "job" : "jobs"} completed`}
+                : `${credits.length} ${credits.length === 1 ? "payment" : "payments"} received`}
             </div>
           </div>
 
+          {/* Virtual account card — only renders once the wallet has loaded
+              and Squad has assigned a virtual account. Great demo moment
+              because it makes the integration feel real to the judge. */}
+          {!isLoading && wallet?.virtual_account_number && (
+            <div className="border border-border-light rounded-md p-3 mb-3 bg-surface-1">
+              <div className="text-[9px] text-text-3 font-mono uppercase tracking-wider mb-1">
+                Your payout account
+              </div>
+              <div className="flex items-baseline justify-between gap-2">
+                <div className="text-[13px] font-mono font-semibold text-text-0 truncate">
+                  {wallet.virtual_bank_name}
+                </div>
+                <div className="text-[13px] font-mono text-text-0 tabular-nums">
+                  {wallet.virtual_account_number}
+                </div>
+              </div>
+              {wallet.virtual_account_name && (
+                <div className="text-[10px] text-text-3 font-mono mt-0.5 truncate">
+                  {wallet.virtual_account_name}
+                </div>
+              )}
+              <div className="text-[10px] text-text-3 mt-1.5">
+                Traders pay you here automatically
+              </div>
+            </div>
+          )}
+
           {error && (
-            <div className="text-red-500 text-xs mb-4 p-2 rounded-sm border border-red-200 bg-red-50">
+            <div className="text-red-500 text-xs mb-3 p-2 rounded-sm border border-red-200 bg-red-50">
               {error}
             </div>
           )}
@@ -163,7 +193,7 @@ const EarningsPage = () => {
                 </div>
               ))}
             </div>
-          ) : paid.length === 0 ? (
+          ) : credits.length === 0 ? (
             <div className="text-center py-10 border border-dashed border-border-dark rounded-md">
               <div className="text-2xl mb-2 opacity-60">👛</div>
               <div className="text-sm text-text-2 mb-2">No earnings yet</div>
@@ -179,36 +209,32 @@ const EarningsPage = () => {
             </div>
           ) : (
             <div className="flex flex-col gap-2">
-              {paid.map((app) => {
-                const opp = opps[app.opportunity_id];
-                const amount =
-                  opp && opp.daily_pay && opp.duration_days
-                    ? opp.daily_pay * opp.duration_days
-                    : null;
-                return (
-                  <div
-                    key={app.id}
-                    className="border border-border-light rounded-md p-3 bg-surface-0 flex justify-between items-start gap-2 transition-all hover:border-border-dark"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[12px] font-semibold text-text-0 truncate">
-                        {opp?.title || "Job"}
-                      </div>
-                      <div className="text-[10px] text-text-3 font-mono mt-0.5">
-                        {formatDate(app.paid_at || app.created_at)}
-                      </div>
-                      {app.squad_payout_ref && (
-                        <div className="text-[9px] text-text-3 font-mono mt-0.5 truncate">
-                          Squad ref: {app.squad_payout_ref}
-                        </div>
-                      )}
+              {credits.map((tx) => (
+                <div
+                  key={tx.id}
+                  className="border border-border-light rounded-md p-3 bg-surface-0 flex justify-between items-start gap-2 transition-all hover:border-border-dark"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[12px] font-semibold text-text-0 truncate">
+                      {tx.description || txTypeLabel(tx.tx_type)}
                     </div>
-                    <div className="text-[13px] font-bold text-brand-deep whitespace-nowrap tabular-nums">
-                      +₦{amount != null ? amount.toLocaleString() : "—"}
+                    <div className="text-[10px] text-text-3 font-mono mt-0.5">
+                      {formatDate(tx.created_at)}
                     </div>
+                    {tx.squad_reference && (
+                      <div className="text-[9px] text-text-3 font-mono mt-0.5 truncate">
+                        Squad ref: {tx.squad_reference}
+                      </div>
+                    )}
                   </div>
-                );
-              })}
+                  <div className="text-[13px] font-bold text-brand-deep whitespace-nowrap tabular-nums">
+                    +₦
+                    {tx.amount_naira != null
+                      ? tx.amount_naira.toLocaleString()
+                      : "—"}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>

@@ -51,6 +51,7 @@ const statusLabel = (status) => {
 const HomePage = () => {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
+  const [wallet, setWallet] = useState(null);
   const [apps, setApps] = useState([]);
   const [opps, setOpps] = useState({});
   const [isLoading, setIsLoading] = useState(true);
@@ -59,13 +60,20 @@ const HomePage = () => {
   useEffect(() => {
     const load = async () => {
       try {
-        const [meRes, appsRes] = await Promise.all([
+        // /wallet/me is the source of truth for earnings — use balance_naira
+        // directly instead of joining applications with opportunities and
+        // summing the daily_pay × duration math like we did before.
+        const [meRes, walletRes, appsRes] = await Promise.all([
           apiClient.get("/auth/me"),
+          apiClient.get("/wallet/me").catch(() => ({ data: null })),
           apiClient.get("/match/applications/mine"),
         ]);
         setUser(meRes.data);
+        setWallet(walletRes.data);
         setApps(appsRes.data);
 
+        // Still need opp details for the Recent activity titles —
+        // MatchResponse doesn't denormalise the opportunity fields.
         const uniqueOppIds = [
           ...new Set(appsRes.data.map((a) => a.opportunity_id)),
         ];
@@ -84,8 +92,8 @@ const HomePage = () => {
         }
       } catch (err) {
         console.error("Failed to load home:", err);
-        // 401 is handled globally by the client interceptor — only show
-        // an error message for other failures.
+        // 401 is handled globally by the client interceptor — only surface
+        // genuine failures here.
         if (err.response?.status !== 401) {
           setError("Could not load your dashboard.");
         }
@@ -102,16 +110,14 @@ const HomePage = () => {
   const accepted = apps.filter((a) => a.status === "accepted");
   const pending = apps.filter((a) => a.status === "suggested");
 
-  const totalEarned = paid.reduce((sum, app) => {
-    const opp = opps[app.opportunity_id];
-    if (!opp) return sum;
-    return sum + (opp.daily_pay || 0) * (opp.duration_days || 0);
-  }, 0);
+  // Wallet balance is the source of truth — falls back to 0 if wallet
+  // hasn't loaded (e.g. backend down). The count-up only starts once
+  // loading is done so it doesn't restart partway through.
+  const totalEarned = wallet?.balance_naira || 0;
+  const animatedEarned = useCountUp(isLoading ? null : totalEarned, 1200);
 
   const bestMatchScore =
     apps.length > 0 ? Math.max(...apps.map((a) => a.match_score ?? 0)) : null;
-
-  const animatedEarned = useCountUp(isLoading ? null : totalEarned, 1200);
 
   const recentApps = [...apps]
     .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
@@ -163,7 +169,7 @@ const HomePage = () => {
             </h1>
           </div>
 
-          {/* Hero earnings card */}
+          {/* Hero earnings card — sourced from wallet.balance_naira */}
           <div className="bg-brand text-white rounded-md p-4 mb-3 relative overflow-hidden shadow-sm">
             <div className="text-[10px] font-mono tracking-wider opacity-80 mb-1">
               EARNED ON EKO

@@ -31,6 +31,7 @@ from app.schemas.match import (
     OpportunityCreateRequest, OpportunityResponse,
     OpportunityFeedItem, ApplicantRankedResponse,
     MatchResponse, CompleteJobResponse,
+    RateRequest, RateResponse, SeekerProfileResponse,   # ← add these three
 )
 from app.services.matching import score_applicant
 from app.services.squad import initiate_transfer, generate_idempotency_key, SquadAPIError
@@ -326,6 +327,13 @@ def accept_applicant(
     # Move opportunity to in_progress
     opp.status = JobStatus.in_progress
 
+    # Learning loop — increment seeker's jobs_accepted counter
+    try:
+        from app.services.feedback import update_seeker_on_accept
+        update_seeker_on_accept(match.job_seeker, db)
+    except Exception as e:
+        logger.warning(f"Could not update seeker accept count: {e}")
+
     db.commit()
     db.refresh(match)
 
@@ -481,6 +489,79 @@ def my_applications(
     )
     return [MatchResponse.from_orm_extended(m) for m in matches]
 
+# ── Rate a completed job ──────────────────────────────────────
+ 
+@router.post("/applications/{match_id}/rate", response_model=RateResponse)
+def rate_match(
+    match_id: int,
+    payload: RateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Rate a completed job.
+    Trader rates the job seeker (1-5 stars).
+    Job seeker rates the trader (1-5 stars).
+    Can only rate once per side per match. Match must be completed.
+    """
+    from app.services.feedback import process_rating
+ 
+    match = db.get(Match, match_id)
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+ 
+    if match.status != MatchStatus.completed:
+        raise HTTPException(status_code=400, detail="Can only rate completed jobs")
+ 
+    if current_user.role == UserRole.trader:
+        trader = _get_trader_or_404(current_user)
+        if match.opportunity.trader_id != trader.id:
+            raise HTTPException(status_code=403, detail="Not your job")
+        rated_by = "trader"
+    elif current_user.role == UserRole.job_seeker:
+        seeker = _get_seeker_or_404(current_user)
+        if match.job_seeker_id != seeker.id:
+            raise HTTPException(status_code=403, detail="Not your application")
+        rated_by = "job_seeker"
+    else:
+        raise HTTPException(status_code=403, detail="Only traders and job seekers can rate")
+ 
+    try:
+        result = process_rating(match, payload.rating, payload.comment, rated_by, db)
+        return RateResponse(**result)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+
+# ── Seeker reliability profile ────────────────────────────────
+ 
+@router.get("/seekers/{job_seeker_id}/profile", response_model=SeekerProfileResponse)
+def get_seeker_profile(
+    job_seeker_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get a job seeker's reliability profile.
+    Traders view this before accepting an applicant.
+    Shows jobs completed, avg rating, completion rate.
+    This is the learning loop output — gets richer with every completed job.
+    """
+    seeker = db.get(JobSeekerProfile, job_seeker_id)
+    if not seeker:
+        raise HTTPException(status_code=404, detail="Job seeker not found")
+    return SeekerProfileResponse.from_orm_extended(seeker)
+
+@router.get("/applications/{match_id}", response_model=MatchResponse)
+def get_application(
+    match_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    match = db.get(Match, match_id)
+    if not match:
+        raise HTTPException(status_code=404, detail="Application not found")
+    return MatchResponse.from_orm_extended(match)
 
 # ── Helper ────────────────────────────────────────────────────────────────────
 

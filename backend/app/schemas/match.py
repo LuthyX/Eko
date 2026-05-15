@@ -216,3 +216,70 @@ class CompleteJobResponse(BaseModel):
     payout_reference: str | None
     payout_status: str
     message: str
+
+# ── Rating ────────────────────────────────────────────────────
+ 
+class RateRequest(BaseModel):
+    rating: int
+    comment: str | None = None
+ 
+    @field_validator("rating")
+    @classmethod
+    def validate_rating(cls, v):
+        if not 1 <= v <= 5:
+            raise ValueError("Rating must be between 1 and 5")
+        return v
+ 
+ 
+class RateResponse(BaseModel):
+    match_id: int
+    rated_by: str
+    rating: int
+    comment: str | None
+    message: str
+
+# ── Seeker reliability profile ────────────────────────────────
+ 
+class SeekerProfileResponse(BaseModel):
+    job_seeker_id: int
+    name: str | None
+    location: str | None
+    skills: list[str] | None
+    languages: list[str] | None
+    daily_rate_expectation: int | None
+    jobs_completed: int
+    jobs_accepted: int
+    avg_rating: float
+    completion_rate: float
+    reliability_label: str
+ 
+    @classmethod
+    def from_orm_extended(cls, profile):
+        user = profile.user
+        jobs_accepted = profile.jobs_accepted or 0
+        jobs_completed = profile.jobs_completed or 0
+        avg_rating = profile.avg_rating or 0.0
+        completion_rate = (jobs_completed / jobs_accepted) if jobs_accepted > 0 else 0.0
+ 
+        if jobs_completed == 0:
+            label = "New"
+        elif avg_rating >= 4.5 and completion_rate >= 0.9:
+            label = "Excellent"
+        elif avg_rating >= 3.5 and completion_rate >= 0.7:
+            label = "Good"
+        else:
+            label = "Building"
+ 
+        return cls(
+            job_seeker_id=profile.id,
+            name=user.full_name if user else None,
+            location=profile.location,
+            skills=profile.skills,
+            languages=profile.languages,
+            daily_rate_expectation=profile.daily_rate_expectation,
+            jobs_completed=jobs_completed,
+            jobs_accepted=jobs_accepted,
+            avg_rating=round(avg_rating, 1),
+            completion_rate=round(completion_rate, 2),
+            reliability_label=label,
+        )

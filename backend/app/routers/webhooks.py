@@ -198,13 +198,15 @@ def _handle_virtual_account_receipt(payload: dict, db: Session):
     squad_ref = payload.get("transaction_reference", "")
     customer_identifier = payload.get("customer_identifier", "")
 
-    # principal_amount comes as a string in naira — convert to kobo
+    # principal_amount is in NAIRA as a string
+    # "20000.00" = ₦20,000
     try:
-        amount_naira_str = payload.get("principal_amount", "0")
-        amount_naira = float(amount_naira_str)
+        amount_naira = float(payload.get("principal_amount", "0"))
         amount_kobo = int(amount_naira * 100)
     except (ValueError, TypeError):
-        logger.error(f"Could not parse principal_amount: {payload.get('principal_amount')}")
+        logger.info(
+            f"Virtual account receipt: ref={squad_ref} "
+            f"customer={customer_identifier} amount=₦{amount_naira:,.2f}")
         return
 
     if not squad_ref or amount_kobo <= 0:
@@ -381,6 +383,13 @@ def _confirm_wage_payout(ref: str, db: Session):
     match.squad_payout_ref = ref
     match.paid_at = datetime.now(timezone.utc)
     match.status = MatchStatus.completed
+
+    # Learning loop — update seeker stats after confirmed payout
+    try:
+        from app.services.feedback import post_completion_update
+        post_completion_update(match, db)
+    except Exception as e:
+        logger.warning(f"Feedback update failed for match {match.id}: {e}")
     db.commit()
 
     logger.info(

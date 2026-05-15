@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.models.wallet import Wallet, WalletTransaction, WalletTxType, WalletTxStatus
 from app.models.user import User
+from app.core.config import settings
 from app.services.squad import (
     create_virtual_account, generate_idempotency_key, SquadAPIError,
 )
@@ -22,61 +23,32 @@ logger = logging.getLogger(__name__)
 
 
 def provision_wallet(user: User, db: Session) -> Wallet:
-    """
-    Create an internal wallet + Squad virtual account for a user.
-    Idempotent — safe to call multiple times.
-
-    Fixed fields sent to Squad:
-      - middle_name: "." (placeholder — Squad requires it)
-      - dob: "01/01/1990" (placeholder — sandbox accepts this)
-      - gender: "1" (male default — sandbox doesn't validate)
-      - address: "Lagos, Nigeria" (placeholder)
-      - bvn: "00000000000" (sandbox dummy — bypasses BVN validation)
-
-    In production you'd collect real DOB, gender, and address at
-    registration and store them on the user model. For the demo,
-    placeholders work fine in sandbox.
-    """
-    existing = db.query(Wallet).filter(Wallet.user_id == user.id).first()
-    if existing:
-        # Only return early if VA is already provisioned
-        if existing.virtual_account_number:
-            return existing
-        # Otherwise fall through and retry Squad VA creation
-        wallet = existing
-    else:
-        wallet = Wallet(
-        user_id=user.id,
-        squad_customer_identifier=customer_identifier,
-        balance_kobo=0,)
-        db.add(wallet)
-        db.flush()
-
+    # Define these FIRST before any branching
     customer_identifier = f"EKO_USER_{user.id}"
 
-    # Parse name — Squad needs first and last separately
     name_parts = user.full_name.strip().split(" ", 2)
     first_name = name_parts[0]
     last_name = name_parts[1] if len(name_parts) > 1 else "."
     middle_name = name_parts[2] if len(name_parts) > 2 else "."
-
-    # Clean phone number — Squad doesn't accept more than 11 digits
     phone = (user.phone or "08000000000").replace("+234", "0").replace(" ", "")[:11]
-
-    # Create wallet row first so we have something even if Squad call fails
-    wallet = Wallet(
-        user_id=user.id,
-        squad_customer_identifier=customer_identifier,
-        balance_kobo=0,
-    )
-    db.add(wallet)
-    db.flush()
-
-    # Squad validates email TLD strictly — .demo is rejected
-    # Sanitize before sending to Squad (doesn't affect our DB record)
     squad_email = user.email.replace(".demo", "-demo.com")
 
-    # Attempt to provision Squad virtual account
+    existing = db.query(Wallet).filter(Wallet.user_id == user.id).first()
+    if existing:
+        if existing.virtual_account_number:
+            return existing
+        # Wallet exists but no VA — fall through to retry Squad
+        wallet = existing
+    else:
+        wallet = Wallet(
+            user_id=user.id,
+            squad_customer_identifier=customer_identifier,
+            balance_kobo=0,
+        )
+        db.add(wallet)
+        db.flush()
+
+    # Try Squad VA creation
     try:
         va_data = create_virtual_account(
             customer_identifier=customer_identifier,
@@ -85,31 +57,27 @@ def provision_wallet(user: User, db: Session) -> Wallet:
             middle_name=middle_name,
             mobile_num=phone,
             email=squad_email,
-            bvn="00000000000",     # sandbox dummy BVN — bypasses validation
-            dob="01/01/1990",      # placeholder — sandbox doesn't validate
-            gender="1",            # placeholder — sandbox doesn't validate
+            bvn="22190390831",
+            dob="01/01/1990",
+            gender="1",
             address="Lagos, Nigeria",
-            # beneficiary_account not set — money goes to Squad wallet (fine for sandbox)
+            beneficiary_account=settings.SQUAD_BENEFICIARY_ACCOUNT,
         )
-        wallet.virtual_account_number = va_data.get("account_number") or va_data.get("virtual_account_number")
         bank_code = va_data.get("bank_code", "")
-        bank_names = {
-        "058": "GTBank",
-        "035": "Wema Bank", 
-        "057": "Zenith Bank",
-        "044": "Access Bank",}
-        wallet.virtual_bank_name = bank_names.get(bank_code, f"Bank ({bank_code})")
-        wallet.virtual_account_name = va_data.get("account_name") or user.full_name
-        logger.info(
-            f"Virtual account provisioned: user={user.id} "
-            f"account={wallet.virtual_account_number} bank={wallet.virtual_bank_name}"
-        )
+        bank_names = {"058": "GTBank", "035": "Wema Bank", "057": "Zenith Bank", "044": "Access Bank"}
+        wallet.virtual_account_number = va_data.get("virtual_account_number")
+        wallet.virtual_bank_name = bank_names.get(bank_code, "GTBank")
+        wallet.virtual_account_name = f"EKO/{user.full_name.upper()}"
+        logger.info(f"Virtual account provisioned: user={user.id} account={wallet.virtual_account_number}")
     except Exception as e:
         logger.warning(f"Squad VA failed: {e}")
+        logger.warning(f"Squad VA failed for user={user.id} email={squad_email}: {e}")
         if not wallet.virtual_account_number:
-            wallet.virtual_account_number = f"070{wallet.id:07d}"
-            wallet.virtual_bank_name = "Wema Bank"
-            wallet.virtual_account_name = user.full_name
+            import hashlib
+            hash_val = int(hashlib.md5(user.email.encode()).hexdigest(), 16)
+            wallet.virtual_account_number = f"07{hash_val % 100000000:08d}"
+            wallet.virtual_bank_name = "GTBank"
+            wallet.virtual_account_name = f"EKO/{user.full_name.upper()}"
 
     db.commit()
     db.refresh(wallet)

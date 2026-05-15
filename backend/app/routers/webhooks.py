@@ -198,13 +198,15 @@ def _handle_virtual_account_receipt(payload: dict, db: Session):
     squad_ref = payload.get("transaction_reference", "")
     customer_identifier = payload.get("customer_identifier", "")
 
-    # principal_amount comes as a string in naira — convert to kobo
+    # principal_amount is in NAIRA as a string
+    # "20000.00" = ₦20,000
     try:
-        amount_naira_str = payload.get("principal_amount", "0")
-        amount_naira = float(amount_naira_str)
+        amount_naira = float(payload.get("principal_amount", "0"))
         amount_kobo = int(amount_naira * 100)
     except (ValueError, TypeError):
-        logger.error(f"Could not parse principal_amount: {payload.get('principal_amount')}")
+        logger.info(
+            f"Virtual account receipt: ref={squad_ref} "
+            f"customer={customer_identifier} amount=₦{amount_naira:,.2f}")
         return
 
     if not squad_ref or amount_kobo <= 0:

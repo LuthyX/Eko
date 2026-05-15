@@ -13,7 +13,7 @@ pydantic-settings==2.2.1
 pytest==8.2.0
 pytest-asyncio==0.23.6
 
-# Phase 2 — ML
-scikit-learn==1.4.2
-shap==0.45.1
-numpy==1.26.4
+# Phase 2 — ML / EkoScore
+scikit-learn==1.5.2
+shap==0.46.0
+numpy==2.0.2

@@ -193,6 +193,9 @@ class Loan(Base):
     trader: Mapped[TraderProfile] = relationship("TraderProfile", back_populates="loans")
     repayments: Mapped[list[Repayment]] = relationship("Repayment", back_populates="loan")
 
+    fee_rate_pct: Mapped[float] = mapped_column(Float, default=5.0)
+    fee_amount: Mapped[int] = mapped_column(Integer, default=0)
+
 
 # ── Repayment ─────────────────────────────────────────────────────────────────
 
@@ -243,6 +246,9 @@ class Opportunity(Base):
 
     trader: Mapped[TraderProfile] = relationship("TraderProfile", back_populates="posted_opportunities")
     matches: Mapped[list[Match]] = relationship("Match", back_populates="opportunity")
+
+    platform_fee_pct: Mapped[float] = mapped_column(Float, default=5.0)
+    platform_fee_amount: Mapped[int] = mapped_column(Integer, default=0)
 
 
 # ── Match ─────────────────────────────────────────────────────────────────────

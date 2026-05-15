@@ -1,4 +1,5 @@
 import { createContext, useState, useContext, useEffect } from 'react'
+import { authService, scoreService, creditService, walletService } from '../api/services'
 
 const AuthContext = createContext()
 const TraderContext = createContext()
@@ -10,89 +11,144 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     // Check if user is already logged in
-    const storedUser = localStorage.getItem('user')
-    if (storedUser) {
-      try {
-        setUser(JSON.parse(storedUser))
-      } catch (e) {
-        console.error('Failed to parse stored user:', e)
+    const checkAuth = async () => {
+      const token = localStorage.getItem('auth_token')
+      if (token) {
+        try {
+          const response = await authService.getCurrentUser()
+          setUser(response.data)
+          localStorage.setItem('user', JSON.stringify(response.data))
+        } catch (err) {
+          console.error('Failed to get current user:', err)
+          localStorage.removeItem('auth_token')
+          localStorage.removeItem('user')
+        }
       }
+      setLoading(false)
     }
-    setLoading(false)
+    
+    checkAuth()
   }, [])
 
-  const login = (userData) => {
-    setUser(userData)
-    localStorage.setItem('user', JSON.stringify(userData))
+  const login = async (email, password) => {
+    try {
+      setError(null)
+      const response = await authService.login(email, password)
+      const { access_token, user_id, role } = response.data
+      
+      localStorage.setItem('auth_token', access_token)
+      
+      // Fetch full user data
+      const userResponse = await authService.getCurrentUser()
+      setUser(userResponse.data)
+      localStorage.setItem('user', JSON.stringify(userResponse.data))
+      
+      return userResponse.data
+    } catch (err) {
+      const message = err.response?.data?.detail || 'Login failed'
+      setError(message)
+      throw err
+    }
+  }
+
+  const register = async (email, password, fullName, phone, role) => {
+    try {
+      setError(null)
+      const response = await authService.register({
+        email,
+        password,
+        full_name: fullName,
+        phone,
+        role,
+      })
+      const { access_token } = response.data
+      
+      localStorage.setItem('auth_token', access_token)
+      
+      // Fetch full user data
+      const userResponse = await authService.getCurrentUser()
+      setUser(userResponse.data)
+      localStorage.setItem('user', JSON.stringify(userResponse.data))
+      
+      return userResponse.data
+    } catch (err) {
+      const message = err.response?.data?.detail || 'Registration failed'
+      setError(message)
+      throw err
+    }
   }
 
   const logout = () => {
     setUser(null)
+    localStorage.removeItem('auth_token')
     localStorage.removeItem('user')
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, error, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, error, login, register, logout }}>
       {children}
     </AuthContext.Provider>
   )
 }
 
 export function TraderProvider({ children }) {
-  const [trader, setTrader] = useState({
-    ekoScore: 74,
-    riskLevel: 'A',
-    verified: true,
-    balance: 2400000,
-    earnedBalance: 48200,
-    activeJobs: 1,
-    scoreChange: 3,
-    scoreTrend: 'up',
-    ekoCredit: {
-      eligible: true,
-      amount: 180000,
-      available: 146200,
-      repaymentRate: '10% per receipt',
-      fixedInstalments: 'None',
-      fee: 9000,
-      totalRepay: 189000,
-      currentAdvance: 146200,
-      repaymentProgress: 10,
-      disbursed: 180000,
-      lastUpdated: 'Today',
-    },
-    jobs: [
-      {
-        id: 1,
-        title: 'Market sales assistant',
-        status: 'IN PROGRESS',
-        rate: '₦4,888/day',
-        applicants: 5,
-        tags: ['Balogum Market', '3 days'],
-      },
-      {
-        id: 2,
-        title: 'Shop assistant - festive stock',
-        status: 'COMPLETED',
-        rate: '₦3,888/day',
-        tags: ['Tech retail', '3 days'],
-      },
-      {
-        id: 3,
-        title: 'Cashier cover',
-        status: 'COMPLETED',
-        rate: '₦3,000',
-        tags: ['1 week'],
-      },
-    ],
-  })
+  const [trader, setTrader] = useState(null)
+  const [ekoScore, setEkoScore] = useState(null)
+  const [credit, setCredit] = useState(null)
+  const [wallet, setWallet] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+
+  const loadTraderData = async (userId) => {
+    try {
+      setLoading(true)
+      setError(null)
+      
+      // Fetch wallet
+      try {
+        const walletResponse = await walletService.getBalance()
+        setWallet(walletResponse.data)
+      } catch (err) {
+        console.error('Failed to fetch wallet:', err)
+      }
+      
+      // Fetch score
+      try {
+        const scoreResponse = await scoreService.getScore(userId)
+        setEkoScore(scoreResponse.data)
+      } catch (err) {
+        console.error('Failed to fetch score:', err)
+      }
+      
+      // Fetch credit eligibility
+      try {
+        const creditResponse = await creditService.checkEligibility()
+        setCredit(creditResponse.data)
+      } catch (err) {
+        console.error('Failed to fetch credit eligibility:', err)
+      }
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const updateTraderData = (newData) => {
     setTrader((prev) => ({ ...prev, ...newData }))
   }
 
   return (
-    <TraderContext.Provider value={{ trader, updateTraderData }}>
+    <TraderContext.Provider value={{ 
+      trader, 
+      ekoScore, 
+      credit, 
+      wallet, 
+      loading, 
+      error, 
+      updateTraderData, 
+      loadTraderData 
+    }}>
       {children}
     </TraderContext.Provider>
   )

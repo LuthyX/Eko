@@ -4,47 +4,57 @@ import api from './client'
 export const authService = {
   register: (data) => api.post('/auth/register', data),
   login: (email, password) => api.post('/auth/login', { email, password }),
+  getCurrentUser: () => api.get('/auth/me'),
+  verifyIdentity: (data) => api.post('/auth/verify-identity', data),
   logout: () => {
     localStorage.removeItem('auth_token')
+    localStorage.removeItem('user')
     return Promise.resolve()
   },
 }
 
-// Trader Profile
+// Trader Onboarding & Profile
 export const traderService = {
-  getProfile: () => api.get('/trader/profile'),
+  onboard: (data) => api.post('/auth/onboard/trader', data),
+  getProfile: () => api.get('/auth/me'),
   updateProfile: (data) => api.put('/trader/profile', data),
-  linkSquad: (squadId) => api.post('/trader/link-squad', { squad_id: squadId }),
 }
 
 // EkoScore
 export const scoreService = {
-  getScore: () => api.get('/trader/score'),
-  getScoreBreakdown: () => api.get('/trader/score/breakdown'),
+  getScore: (traderId) => api.get(`/score/${traderId}`),
+  getScoreHistory: (traderId) => api.get(`/score/${traderId}/history`),
+  computeScore: (traderId, data) => api.post(`/score/compute/${traderId}`, data),
 }
 
 // EkoCredit
 export const creditService = {
-  getOffer: () => api.get('/trader/credit/offer'),
-  applyCredit: (amount) => api.post('/trader/credit/apply', { amount }),
-  getRepaymentStatus: () => api.get('/trader/credit/repayment'),
+  checkEligibility: () => api.get('/credit/eligibility'),
+  apply: (data) => api.post('/credit/apply', data),
+  getActiveLoan: () => api.get('/credit/loan/active'),
+  getLoanHistory: () => api.get('/credit/loan/history'),
+  manualRepay: (data) => api.post('/credit/repay/manual', data),
 }
 
-// Opportunities
-export const opportunityService = {
-  postOpportunity: (data) => api.post('/opportunities', data),
-  getMyOpportunities: () => api.get('/trader/opportunities'),
-  closeOpportunity: (id) => api.put(`/opportunities/${id}/close`),
+// Wallet
+export const walletService = {
+  getBalance: () => api.get('/wallet/me'),
+  getTransactions: (limit = 50) => api.get('/wallet/me/transactions', { params: { limit } }),
+  withdraw: (data) => api.post('/wallet/withdraw', data),
 }
 
-// EkoSave
-export const saveService = {
-  getVault: () => api.get('/trader/save/vault'),
-  updateSaveRate: (rate) => api.put('/trader/save/rate', { percentage: rate }),
+// Job Matching
+export const matchService = {
+  postJob: (data) => api.post('/match/job/post', data),
+  getMyJobs: () => api.get('/match/trader/jobs'),
+  getJobApplicants: (jobId) => api.get(`/match/job/${jobId}/applicants`),
+  rateApplicant: (jobId, applicantId, data) => api.post(`/match/job/${jobId}/applicant/${applicantId}/rate`, data),
 }
 
-// Insurance
-export const insuranceService = {
-  getAvailableProducts: () => api.get('/trader/insurance/products'),
-  getPolicies: () => api.get('/trader/insurance/policies'),
+// Job Seeker
+export const seekerService = {
+  onboard: (data) => api.post('/auth/onboard/job-seeker', data),
+  getJobsNearby: () => api.get('/match/seeker/jobs'),
+  applyForJob: (jobId) => api.post(`/match/job/${jobId}/apply`),
+  getApplications: () => api.get('/match/seeker/applications'),
 }

@@ -1,28 +1,43 @@
+import { useEffect } from 'react'
 import { useTrader } from '../context/AppContext'
+import { useAuth } from '../context/AppContext'
 import { Button, StatCard, ScoreHero, Badge, Card, Transaction } from '../components/UI'
 import { Header, Navbar, TabBar } from '../components/Layout'
 
 export default function DashboardPage() {
-  const { trader } = useTrader()
+  const { user } = useAuth()
+  const { trader, ekoScore, wallet, loading, loadTraderData } = useTrader()
+
+  useEffect(() => {
+    if (user?.id) {
+      loadTraderData(user.id)
+    }
+  }, [user])
+
+  const displayName = user?.full_name?.split(' ')[0] || 'Trader'
+  const score = ekoScore?.score || 74
+  const riskLevel = ekoScore?.risk_tier || 'A'
+  const balance = wallet?.balance || 2400000
+  const earnedBalance = wallet?.saving_account_balance || 48200
 
   return (
     <div className="pb-20">
-      <Navbar title={`Good morning, ${trader.name || 'Amaka'} 🔥`} />
+      <Navbar title={`Good morning, ${displayName} 🔥`} />
       
       <div className="px-4 py-4">
         {/* EkoScore Hero */}
         <ScoreHero 
-          score={trader.ekoScore}
+          score={score}
           title="EKOSCORE"
-          subtitle={`${trader.scoreChange > 0 ? '↑' : '↓'} ${Math.abs(trader.scoreChange)} · ${trader.riskLevel} verified`}
+          subtitle={`${riskLevel} verified`}
         />
 
         {/* Stats Grid */}
         <div className="grid grid-cols-2 gap-3 mb-4">
-          <StatCard label="30-day volume" value={`₦${(trader.balance / 1000000).toFixed(1)}M`} />
-          <StatCard label="Score trend" value={`${trader.scoreChange > 0 ? '+' : ''}${trader.scoreChange}3`} />
-          <StatCard label="Active jobs" value={trader.activeJobs} />
-          <StatCard label="Earning" value={`₦${trader.earnedBalance / 1000}K`} />
+          <StatCard label="Account balance" value={`₦${(balance / 1000000).toFixed(1)}M`} />
+          <StatCard label="Risk tier" value={riskLevel} />
+          <StatCard label="Status" value="Active" />
+          <StatCard label="Earned" value={`₦${earnedBalance / 1000}K`} />
         </div>
 
         {/* EkoCredit Offer */}
@@ -30,7 +45,7 @@ export default function DashboardPage() {
           <div className="flex items-start justify-between mb-2">
             <div>
               <p className="text-xs text-green-700 uppercase font-mono tracking-wider mb-1">EKOCREDIT OFFER</p>
-              <p className="text-3xl font-light text-green-900 leading-tight">₦{trader.ekoCredit.amount.toLocaleString()}</p>
+              <p className="text-3xl font-light text-green-900 leading-tight">₦180,000</p>
             </div>
             <span className="text-2xl">⭐</span>
           </div>

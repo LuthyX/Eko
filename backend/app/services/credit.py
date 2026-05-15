@@ -22,7 +22,14 @@ from app.models.user import (
     Loan, LoanStatus, Repayment, SaveAccount, TraderProfile,
 )
 from app.models.wallet import WalletTxType
-from app.services.ekoscore import get_latest_score
+
+try:
+    from app.services.ekoscore import get_latest_score
+except ImportError:
+    # Phase 2 ML dependencies not installed
+    def get_latest_score(trader_id: int, db):
+        return None
+
 from app.services.squad import (
     initiate_transfer, generate_idempotency_key, SquadAPIError,
 )

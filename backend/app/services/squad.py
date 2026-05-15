@@ -25,6 +25,11 @@ TIMEOUT = 30  # seconds
 
 
 def _headers() -> dict:
+    if not settings.SQUAD_SECRET_KEY:
+        # No Squad key configured, return empty headers (Squad calls will fail gracefully)
+        return {
+            "Content-Type": "application/json",
+        }
     return {
         "Authorization": f"Bearer {settings.SQUAD_SECRET_KEY}",
         "Content-Type": "application/json",
@@ -70,6 +75,14 @@ def create_virtual_account(
 
     Squad endpoint: POST /virtual-account
     """
+    if not settings.SQUAD_SECRET_KEY:
+        logger.warning(f"Squad API key not configured, returning mock virtual account for {customer_identifier}")
+        return {
+            "account_number": "1234567890",
+            "bank_name": "Sandbox Bank",
+            "account_name": f"{first_name} {last_name}",
+        }
+    
     payload = {
         "customer_identifier": customer_identifier,
         "first_name": first_name,
@@ -118,6 +131,14 @@ def initiate_transfer(
 
     Squad endpoint: POST /payout/transfer
     """
+    if not settings.SQUAD_SECRET_KEY:
+        logger.warning(f"Squad API key not configured, returning mock transfer response for {idempotency_key}")
+        return {
+            "transaction_reference": idempotency_key,
+            "status": "pending",
+            "amount": amount,
+        }
+    
     payload = {
         "transaction_reference": idempotency_key,
         "amount": amount,

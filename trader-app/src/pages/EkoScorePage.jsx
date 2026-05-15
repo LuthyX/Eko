@@ -3,7 +3,20 @@ import { Button, ScoreHero, ProgressBar, StatCard, NotificationCard } from '../c
 import { Navbar, TabBar } from '../components/Layout'
 
 export default function EkoScorePage() {
-  const { trader } = useTrader()
+  const { ekoScore, loading } = useTrader()
+
+  // Fallback values when EkoScore is not available (Phase 2 ML not enabled)
+  const score = ekoScore?.score || 74
+  const riskTier = ekoScore?.risk_tier || 'A'
+
+  if (loading) {
+    return (
+      <div className="pb-20">
+        <Navbar title="My EkoScore" backLink="/dashboard" />
+        <div className="p-4 text-center text-gray-500">Loading...</div>
+      </div>
+    )
+  }
 
   const scoreBreakdown = [
     { label: 'Transaction volume', value: '30%' },
@@ -20,10 +33,10 @@ export default function EkoScorePage() {
       <div className="px-4 py-4">
         {/* Score Hero */}
         <ScoreHero 
-          score={trader.ekoScore}
+          score={score}
           title="YOUR SCORE"
-          subtitle="Top 20% of fabric traders - Lagos"
-          progress={74}
+          subtitle={`${riskTier} - ${riskTier === 'A' ? 'Top 20%' : 'Good standing'} of traders - Lagos`}
+          progress={score}
         />
 
         {/* Signal Breakdown */}

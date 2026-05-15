@@ -41,7 +41,7 @@ export default function RegisterPage() {
         formData.phone,
         formData.role
       )
-      navigate(formData.role === 'trader' ? '/onboarding' : '/jobs')
+      navigate(formData.role === 'trader' ? '/dashboard' : '/jobs')
     } catch (err) {
       setError(err.response?.data?.detail || 'Registration failed. Please try again.')
     } finally {

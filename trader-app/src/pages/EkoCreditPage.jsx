@@ -88,39 +88,6 @@ export default function EkoCreditPage() {
         {/* Info */}
         <Card className="bg-blue-50 border-blue-200 mb-4">
           <div className="text-xs text-blue-800 leading-relaxed">
-            <p className="mb-2">✓ 10
-        {/* Terms */}
-        <Card className="mb-4">
-          <h3 className="font-semibold text-sm mb-3 text-gray-900">Terms</h3>
-          <div className="space-y-2 text-sm">
-            <div className="flex justify-between">
-              <span className="text-gray-600">Advance</span>
-              <span className="font-semibold text-gray-900">₦{amount.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-600">Repayment rate</span>
-              <span className="font-mono text-green-600 font-semibold">10% per receipt</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-600">Fixed instalments</span>
-              <span className="font-mono text-gray-900 font-semibold">None ✓</span>
-            </div>
-            <div className="border-t border-gray-200 pt-2 mt-2">
-              <div className="flex justify-between">
-                <span className="text-gray-600">Fee ({feePercent}% flat)</span>
-                <span className="font-mono text-gray-900">₦{fee.toLocaleString()}</span>
-              </div>
-            </div>
-            <div className="flex justify-between font-semibold">
-              <span className="text-gray-900">Total to repay</span>
-              <span className="text-gray-900">₦{totalRepay.toLocaleString()}</span>
-            </div>
-          </div>
-        </Card>
-
-        {/* Info */}
-        <Card className="bg-blue-50 border-blue-200 mb-4">
-          <div className="text-xs text-blue-800 leading-relaxed">
             <p className="mb-2">✓ 10% swept automatically from each incoming Squad payment. No action needed</p>
             <p>By confirming you authorise Eko to sweep 10% of each Squad payment until fully repaid.</p>
           </div>

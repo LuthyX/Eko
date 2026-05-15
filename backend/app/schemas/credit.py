@@ -102,15 +102,18 @@ class LoanResponse(BaseModel):
     amount_naira: float
     outstanding_kobo: int
     outstanding_naira: float
+    fee_amount_naira: float          # NEW — Eko's origination fee e.g. ₦9,000
+    fee_rate_pct: float              # NEW — e.g. 5.0
+    total_repayable_naira: float     # NEW — principal + fee e.g. ₦189,000
     status: LoanStatus
     squad_transaction_ref: str | None
     sweep_rate_pct: float
     repayment_window_days: int
     disbursed_at: datetime | None
     created_at: datetime
-
+ 
     model_config = {"from_attributes": True}
-
+ 
     @classmethod
     def from_orm_extended(cls, loan):
         return cls(
@@ -120,6 +123,9 @@ class LoanResponse(BaseModel):
             amount_naira=loan.amount / 100,
             outstanding_kobo=loan.outstanding,
             outstanding_naira=loan.outstanding / 100,
+            fee_amount_naira=(loan.fee_amount or 0) / 100,
+            fee_rate_pct=loan.fee_rate_pct or 5.0,
+            total_repayable_naira=loan.outstanding / 100,   # outstanding already includes fee
             status=loan.status,
             squad_transaction_ref=loan.squad_transaction_ref,
             sweep_rate_pct=loan.sweep_rate_pct or 10.0,

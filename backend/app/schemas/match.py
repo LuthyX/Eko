@@ -210,7 +210,9 @@ class CompleteJobResponse(BaseModel):
     match_id: int
     opportunity_title: str
     job_seeker_name: str | None
-    total_pay_naira: int
+    total_pay_naira: int             # wage only — what seeker receives
+    platform_fee_naira: int          # NEW — Eko's fee e.g. ₦600
+    total_charged_naira: int         # NEW — wage + fee e.g. ₦12,600 charged to trader
     payout_reference: str | None
-    payout_status: str                    # "processing" — confirmed via webhook
+    payout_status: str
     message: str

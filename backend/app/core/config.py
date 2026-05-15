@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     SQUAD_SECRET_KEY: str = ""
     SQUAD_BASE_URL: str = "https://sandbox-api-d.squadco.com"
     SQUAD_WEBHOOK_SECRET: str = ""
+    SQUAD_BENEFICIARY_ACCOUNT: str = ""
 
     # Anthropic
     ANTHROPIC_API_KEY: str = ""

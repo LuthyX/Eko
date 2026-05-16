@@ -29,6 +29,8 @@ from app.services.squad import (
 from app.services.wallet import (
     get_wallet_or_error, credit, debit, InsufficientBalanceError,
 )
+from app.models.wallet import WalletTxType
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +212,27 @@ def disburse_credit(
             logger.info(f"Squad transfer initiated: loan={loan.id} ref={loan.squad_transaction_ref}")
         except SquadAPIError as e:
             logger.error(f"Squad transfer failed for loan {loan.id}: {e}")
+        
+    try:
+        credit(
+            wallet=wallet,
+            amount_kobo=principal_kobo,
+            tx_type=WalletTxType.credit_loan_disbursement,
+            idempotency_key=f"{idempotency_key}_WALLET",
+            db=db,
+            squad_reference=loan.squad_transaction_ref,
+            description=f"EkoCredit advance ₦{amount_naira:,}",
+            loan_id=loan.id,
+        )
+        loan.status = LoanStatus.active
+        loan.disbursed_at = datetime.now(timezone.utc)
+        logger.info(f"EkoCredit wallet credited immediately: loan={loan.id} amount=₦{amount_naira:,}")
+    except Exception as e:
+        logger.error(f"Failed to credit wallet for loan {loan.id}: {e}")
+    # ── END NEW ────────────────────────────────────────────────────────────────
+
+    db.commit()
+    db.refresh(loan)    
  
     db.commit()
     db.refresh(loan)

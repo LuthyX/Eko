@@ -229,11 +229,11 @@ def _handle_virtual_account_receipt(payload: dict, db: Session):
         return
 
     # Idempotency — skip if already processed
+    # This catches loan disbursements already credited in disburse_credit()
     existing = (
         db.query(WalletTransaction)
         .filter(
             WalletTransaction.squad_reference == squad_ref,
-            WalletTransaction.tx_type == WalletTxType.credit_payment_received,
         )
         .first()
     )

@@ -79,6 +79,8 @@ class TraderOnboardRequest(BaseModel):
 class TraderProfileResponse(BaseModel):
     id: int
     user_id: int
+    full_name: str | None          # NEW — from profile.user.full_name
+    phone: str | None              # NEW — from profile.user.phone
     business_name: str | None
     business_category: str | None
     market_location: str | None
@@ -92,6 +94,8 @@ class TraderProfileResponse(BaseModel):
         return cls(
             id=profile.id,
             user_id=profile.user_id,
+            full_name=profile.user.full_name if profile.user else None,
+            phone=profile.user.phone if profile.user else None,
             business_name=profile.business_name,
             business_category=profile.business_category,
             market_location=profile.market_location,
@@ -118,3 +122,9 @@ class JobSeekerProfileResponse(BaseModel):
     daily_rate_expectation: int | None
 
     model_config = {"from_attributes": True}
+
+class JobSeekerUpdateRequest(BaseModel):
+    skills: list[str] | None = None
+    languages: list[str] | None = None
+    location: str | None = None
+    daily_rate_expectation: int | None = None

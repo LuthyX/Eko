@@ -90,6 +90,11 @@ class MatchResponse(BaseModel):
     squad_payout_ref: str | None
     paid_at: datetime | None
     created_at: datetime
+    job_seeker_phone: str | None    # NEW — seeker's own phone (for trader contact)
+    trader_full_name: str | None    # NEW — trader's name (for seeker contact)
+    trader_phone: str | None        # NEW — trader's phone (for seeker contact)
+    trader_business_name: str | None  # NEW — already in Opportunity but handy here
+    opportunity_title: str | None   # FIX 4 — title from match.opportunity.title
 
     # Denormalised fields for convenience
     job_seeker_name: str | None = None
@@ -104,6 +109,10 @@ class MatchResponse(BaseModel):
     def from_orm_extended(cls, match):
         js = match.job_seeker
         user = js.user if js else None
+        opp = match.opportunity
+        trader = opp.trader if opp else None
+        trader_user = trader.user if trader else None
+        is_accepted = match.status in ('accepted', 'completed')
         return cls(
             id=match.id,
             opportunity_id=match.opportunity_id,
@@ -120,6 +129,11 @@ class MatchResponse(BaseModel):
             job_seeker_skills=js.skills if js else None,
             job_seeker_languages=js.languages if js else None,
             job_seeker_daily_rate=js.daily_rate_expectation if js else None,
+            job_seeker_phone=user.phone if user else None,
+            trader_full_name=trader_user.full_name if trader_user else None,
+            trader_phone=trader_user.phone if (trader_user and is_accepted) else None,
+            trader_business_name=trader.business_name if trader else None,
+            opportunity_title=opp.title if opp else None,
         )
 
 
@@ -139,6 +153,8 @@ class ApplicantRankedResponse(BaseModel):
     match_reasoning: str | None           # "Claude ranked Emeka 94% — here's why"
     engine_used: str | None
     status: MatchStatus
+    job_seeker_phone: str | None    # NEW
+
 
     @classmethod
     def from_orm_extended(cls, match):
@@ -156,6 +172,7 @@ class ApplicantRankedResponse(BaseModel):
             match_reasoning=match.match_reasoning,
             engine_used=match.engine_used,
             status=match.status,
+            job_seeker_phone=user.phone if user else None,
         )
 
 

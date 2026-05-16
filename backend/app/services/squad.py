@@ -208,7 +208,6 @@ def initiate_transfer(
         "bank_code": bank_code,
         "account_number": account_number,
         "account_name": account_name,
-        "narration": narration,
         "currency_id": "NGN",
     }
 
@@ -291,6 +290,17 @@ def get_merchant_transactions(
         for t in transactions
         if t.get("transaction_status") == "success"
     ]
+
+def disable_auto_payout():
+    """Call once to disable auto-payout so manual transfers work."""
+    with httpx.Client(timeout=TIMEOUT) as client:
+        response = client.patch(
+            f"{BASE_URL}/merchant/auto-payout",
+            json={"is_auto_payout": False},
+            headers=_headers(),
+        )
+    data = _raise_for_squad_error(response, "disable_auto_payout")
+    return data
 
 
 # ── Utility ───────────────────────────────────────────────────────────────────

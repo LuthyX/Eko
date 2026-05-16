@@ -563,6 +563,42 @@ def get_application(
         raise HTTPException(status_code=404, detail="Application not found")
     return MatchResponse.from_orm_extended(match)
 
+@router.get("/opportunities/{opportunity_id}/seeker-view", response_model=OpportunityFeedItem)
+def get_opportunity_seeker_view(
+    opportunity_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Single opportunity with seeker-specific fields:
+    already_applied and my_match_score.
+    Avoids fetching the entire list just to render one detail page.
+    """
+    opp = _get_opportunity_or_404(opportunity_id, db)
+
+    seeker_profile = getattr(current_user, "job_seeker_profile", None)
+    already_applied = False
+    my_match_score = None
+
+    if seeker_profile:
+        existing = (
+            db.query(Match)
+            .filter(
+                Match.opportunity_id == opportunity_id,
+                Match.job_seeker_id == seeker_profile.id,
+            )
+            .first()
+        )
+        if existing:
+            already_applied = True
+            my_match_score = existing.match_score
+
+    return OpportunityFeedItem.from_orm_extended(
+        opp,
+        already_applied=already_applied,
+        my_match_score=my_match_score,
+    )
+
 # ── Helper ────────────────────────────────────────────────────────────────────
 
 def _get_bank_code(bank_name: str | None) -> str:

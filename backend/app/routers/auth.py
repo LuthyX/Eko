@@ -14,6 +14,7 @@ from app.schemas.auth import (
     VerifyIdentityRequest, UserResponse,
     TraderOnboardRequest, TraderProfileResponse,
     JobSeekerOnboardRequest, JobSeekerProfileResponse,
+    JobSeekerUpdateRequest
 )
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -162,6 +163,29 @@ def onboard_job_seeker(
 
     return profile
 
+
+@router.patch("/onboard/job-seeker/me", response_model=JobSeekerProfileResponse)
+def update_job_seeker_profile(
+    payload: JobSeekerUpdateRequest,
+    current_user: User = Depends(require_role(UserRole.job_seeker)),
+    db: Session = Depends(get_db),
+):
+    profile = current_user.job_seeker_profile
+    if not profile:
+        raise HTTPException(status_code=404, detail="Job seeker profile not found")
+
+    if payload.skills is not None:
+        profile.skills = payload.skills
+    if payload.languages is not None:
+        profile.languages = payload.languages
+    if payload.location is not None:
+        profile.location = payload.location
+    if payload.daily_rate_expectation is not None:
+        profile.daily_rate_expectation = payload.daily_rate_expectation
+
+    db.commit()
+    db.refresh(profile)
+    return profile
 
 @router.get("/onboard/job-seeker/me", response_model=JobSeekerProfileResponse)
 def get_job_seeker_profile(

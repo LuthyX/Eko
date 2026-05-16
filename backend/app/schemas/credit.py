@@ -202,6 +202,26 @@ class ManualRepaymentRequest(BaseModel):
             raise ValueError("Minimum repayment is ₦100")
         return v
 
+class ManualRepaymentRequest(BaseModel):
+    amount_naira: int
+
+    @field_validator("amount_naira")
+    @classmethod
+    def validate_amount(cls, v):
+        if v < 100:
+            raise ValueError("Minimum repayment is ₦100")
+        return v
+
+
+class SweepRateUpdateRequest(BaseModel):
+    sweep_rate_pct: float
+
+    @field_validator("sweep_rate_pct")
+    @classmethod
+    def validate_sweep(cls, v):
+        if not 1.0 <= v <= 50.0:
+            raise ValueError("Sweep rate must be between 1% and 50%")
+        return v
 
 class WithdrawalRequest(BaseModel):
     amount_naira: int

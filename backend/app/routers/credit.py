@@ -9,7 +9,7 @@ from app.schemas.credit import (
     RepaymentResponse, SaveEnrollRequest, SaveAccountResponse,
     WalletResponse, WalletTransactionResponse,
     WithdrawalRequest, WithdrawalResponse,
-    ManualRepaymentRequest,
+    ManualRepaymentRequest, SweepRateUpdateRequest
 )
 from app.services.credit import (
     check_credit_eligibility, disburse_credit,
@@ -20,6 +20,7 @@ from app.services.credit import (
 )
 from app.services.wallet import provision_wallet, get_wallet, get_transactions, InsufficientBalanceError
 from app.models.user import Loan, Repayment
+from pydantic import BaseModel, field_validator
 
 router = APIRouter(tags=["Credit & Wallet"])
 
@@ -199,3 +200,42 @@ def my_save_account(
     if not account:
         return None
     return SaveAccountResponse.from_orm_extended(account)
+
+
+
+@router.patch("/credit/loan/active/sweep-rate", response_model=LoanResponse)
+def update_active_loan_sweep_rate(
+    payload: SweepRateUpdateRequest,
+    current_user: User = Depends(require_role(UserRole.trader)),
+    db: Session = Depends(get_db),
+):
+    """
+    Adjust the sweep rate on the active loan.
+    Can only set at or above the risk-tier minimum — cannot go lower.
+    Higher sweep rate = faster repayment = less interest risk.
+    """
+    trader = _get_trader_profile(current_user, db)
+    loan = get_active_loan(trader.id, db)
+    if not loan:
+        raise HTTPException(status_code=404, detail="No active loan found")
+
+    # Enforce minimum based on their score tier
+    from app.services.credit import calculate_sweep_rate
+    from app.services.ekoscore import get_latest_score
+    score_record = get_latest_score(trader.id, db)
+    minimum = calculate_sweep_rate(score_record.score) if score_record else 10.0
+
+    if payload.sweep_rate_pct < minimum:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Minimum sweep rate for your score tier is {minimum}%. You cannot go below this."
+        )
+
+    loan.sweep_rate_pct = payload.sweep_rate_pct
+    db.commit()
+    db.refresh(loan)
+
+    logger.info(
+        f"Sweep rate updated: trader={trader.id} loan={loan.id} "
+        f"new_rate={payload.sweep_rate_pct}%"
+    )
